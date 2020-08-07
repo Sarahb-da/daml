@@ -584,12 +584,62 @@ class Ledger {
    * @typeparam T The contract template type.
    * @typeparam K The contract key type.
    * @typeparam I The contract id type.
+   *
+   * @deprecated since 1.5; use [[streamQueries]] instead
    */
+  // This code is deprecated and only kept to guarantee backwardss
+  // compatibility. Do not change until removal.
   streamQuery<T extends object, K, I extends string>(
     template: Template<T, K, I>,
     query?: Query<T>,
   ): Stream<T, K, I, readonly CreateEvent<T, K, I>[]> {
     const request = {templateIds: [template.templateId], query};
+    const reconnectRequest = (): object[] => [request];
+    const change = (contracts: readonly CreateEvent<T, K, I>[], events: readonly Event<T, K, I>[]): CreateEvent<T, K, I>[] => {
+      const archiveEvents: Set<ContractId<T>> = new Set();
+      const createEvents: CreateEvent<T, K, I>[] = [];
+      for (const event of events) {
+        if ('created' in event) {
+          createEvents.push(event.created);
+        } else {
+          archiveEvents.add(event.archived.contractId);
+        }
+      }
+      return contracts
+        .concat(createEvents)
+        .filter(contract => !archiveEvents.has(contract.contractId));
+    };
+    return this.streamSubmit(template, 'v1/stream/query', request, reconnectRequest, [], change);
+  }
+
+  /**
+   * Retrieve a consolidated stream of events for a given template and queries.
+   *
+   * The accumulated state is the current set of active contracts matching the
+   * queries.
+   *
+   * When no `queries` argument is given, all events visible to the submitting
+   * party are returned.
+   *
+   * When one or more `queries` arguments are given, only those create events
+   * matching at least one of the queries are returned.
+   *
+   * See https://docs.daml.com/json-api/search-query-language.html for a
+   * description of the query language.
+   *
+   * @param template The contract template to match contracts against.
+   * @param query A query to match contracts against.
+   *
+   * @typeparam T The contract template type.
+   * @typeparam K The contract key type.
+   * @typeparam I The contract id type.
+   */
+  streamQueries<T extends object, K, I extends string>(
+    template: Template<T, K, I>,
+    ...queries: Query<T>[]
+  ): Stream<T, K, I, readonly CreateEvent<T, K, I>[]> {
+    const request = queries.length == 0 ? [{templateIds: [template.templateId]}]
+                                         : queries.map(q => ({templateIds: [template.templateId], query: q}));
     const reconnectRequest = (): object[] => [request];
     const change = (contracts: readonly CreateEvent<T, K, I>[], events: readonly Event<T, K, I>[]): CreateEvent<T, K, I>[] => {
       const archiveEvents: Set<ContractId<T>> = new Set();
@@ -616,7 +666,11 @@ class Ledger {
    * @typeparam T The contract template type.
    * @typeparam K The contract key type.
    * @typeparam I The contract id type.
+   *
+   * @deprecated since 1.5; use [[streamFetchByKeys]] instead
    */
+  // This code is deprecated and only kept to guarantee backwardss
+  // compatibility. Do not change until removal.
   streamFetchByKey<T extends object, K, I extends string>(
     template: Template<T, K, I>,
     key: K,
@@ -625,10 +679,45 @@ class Ledger {
     const request = [{templateId: template.templateId, key}];
     const reconnectRequest = (): object[] => [{...request[0], 'contractIdAtOffset': lastContractId}]
     const change = (contract: CreateEvent<T, K, I> | null, events: readonly Event<T, K, I>[]): CreateEvent<T, K, I> | null => {
+      for (const event of events) {
+        if ('created' in event) {
+          contract = event.created;
+        } else {
+          if (contract && contract.contractId === event.archived.contractId) {
+            contract = null;
+          }
+        }
+      }
+      lastContractId = contract ? contract.contractId : null
+      return contract;
+    }
+    return this.streamSubmit(template, 'v1/stream/fetch', request, reconnectRequest, null, change);
+  }
+
+  /**
+   * Retrieve a consolidated stream of events for a given template and contract key.
+   *
+   * Same as [[streamQuery]], but instead of a query, match contracts by
+   * contract key. If multiple keys are given, returns a consolidated stream of
+   * all events for all given keys.
+   *
+   * @typeparam T The contract template type.
+   * @typeparam K The contract key type.
+   * @typeparam I The contract id type.
+   */
+  streamFetchByKeys<T extends object, K, I extends string>(
+    template: Template<T, K, I>,
+    key: K,
+    ...keys: K[]
+  ): Stream<T, K, I, CreateEvent<T, K, I> | null> {
+    let lastContractId: ContractId<T> | null = null;
+    const request = [{templateId: template.templateId, key}].concat(keys.map(k => ({templateId: template.templateId, key: k})));
+    const reconnectRequest = (): object[] => [{...request[0], 'contractIdAtOffset': lastContractId}]
+    const change = (contract: CreateEvent<T, K, I> | null, events: readonly Event<T, K, I>[]): CreateEvent<T, K, I> | null => {
       // NOTE(MH, #4564): We're very lenient here. We should not see a create
       // event when `contract` is currently not null. We should also only see
       // archive events when `contract` is currently not null and the contract
-      // ids match. However, the JSON API does not provied these guarantees yet
+      // ids match. However, the JSON API does not provide these guarantees yet
       // but we're working on them.
       for (const event of events) {
         if ('created' in event) {
