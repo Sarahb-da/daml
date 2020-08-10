@@ -587,7 +587,7 @@ class Ledger {
    *
    * @deprecated since 1.5; use [[streamQueries]] instead
    */
-  // This code is deprecated and only kept to guarantee backwardss
+  // This code is deprecated and only kept to guarantee backwards
   // compatibility. Do not change until removal.
   streamQuery<T extends object, K, I extends string>(
     template: Template<T, K, I>,
@@ -661,7 +661,8 @@ class Ledger {
   /**
    * Retrieve a consolidated stream of events for a given template and contract key.
    *
-   * Same as [[streamQuery]], but instead of a query, match contracts by contract key.
+   * The accumulated state is either the current active contract for the given
+   * key, or null if there is no active contract for the given key.
    *
    * @typeparam T The contract template type.
    * @typeparam K The contract key type.
@@ -669,7 +670,7 @@ class Ledger {
    *
    * @deprecated since 1.5; use [[streamFetchByKeys]] instead
    */
-  // This code is deprecated and only kept to guarantee backwardss
+  // This code is deprecated and only kept to guarantee backwards
   // compatibility. Do not change until removal.
   streamFetchByKey<T extends object, K, I extends string>(
     template: Template<T, K, I>,
@@ -695,11 +696,44 @@ class Ledger {
   }
 
   /**
-   * Retrieve a consolidated stream of events for a given template and contract key.
+   * @internal
    *
-   * Same as [[streamQuery]], but instead of a query, match contracts by
-   * contract key. If multiple keys are given, returns a consolidated stream of
-   * all events for all given keys.
+   * Returns the same API as [[streamSubmit]] but does not, in fact, establish
+   * any socket connection. Instead, this is a stream that always has the given
+   * value as its accumulated state.
+   */
+  constantStream<T extends object, K, I extends string, V>(
+    value: V,
+  ): Stream<T, K, I, V> {
+    function on(t: 'live', l: (v: V) => void): void;
+    function on(t: 'change', l: (v: V, events: readonly Event<T, K, I>[]) => void): void;
+    function on(t: 'close', l: (e: StreamCloseEvent) => void): void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function on(type: any, listener: any): any {
+        if (type === 'live') {
+          listener(value);
+        }
+        if (type === 'change') {
+          listener(value, []);
+        }
+    }
+    function off(t: 'live', l: (v: V) => void): void;
+    function off(t: 'change', l: (v: V, events: readonly Event<T, K, I>[]) => void): void;
+    function off(t: 'close', l: (e: StreamCloseEvent) => void): void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
+    function off(_t: any, _l: any): any {}
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    return { on, off, close: (): void => {} };
+  }
+
+  /**
+   * Retrieve a consolidated stream of events for a list of keys and a single
+   * template.
+   *
+   * The accumulated state is an array of the same length as the given list of
+   * keys, with positional correspondence. Each element in the array represents
+   * the current contract for the given key, or is explicitly null if there is
+   * currently no active contract matching that key.
    *
    * @typeparam T The contract template type.
    * @typeparam K The contract key type.
@@ -707,31 +741,41 @@ class Ledger {
    */
   streamFetchByKeys<T extends object, K, I extends string>(
     template: Template<T, K, I>,
-    key: K,
-    ...keys: K[]
-  ): Stream<T, K, I, CreateEvent<T, K, I> | null> {
-    let lastContractId: ContractId<T> | null = null;
-    const request = [{templateId: template.templateId, key}].concat(keys.map(k => ({templateId: template.templateId, key: k})));
-    const reconnectRequest = (): object[] => [{...request[0], 'contractIdAtOffset': lastContractId}]
-    const change = (contract: CreateEvent<T, K, I> | null, events: readonly Event<T, K, I>[]): CreateEvent<T, K, I> | null => {
-      // NOTE(MH, #4564): We're very lenient here. We should not see a create
-      // event when `contract` is currently not null. We should also only see
-      // archive events when `contract` is currently not null and the contract
-      // ids match. However, the JSON API does not provide these guarantees yet
-      // but we're working on them.
+    keys: K[],
+  ): Stream<T, K, I, (CreateEvent<T, K, I> | null)[]> {
+    if (keys.length == 0) {
+      return this.constantStream([]);
+    }
+    const lastContractIds: (ContractId<T> | null)[] = Array(keys.length).fill(null);
+    const keysCopy = Array.from(keys);
+    const initState: (CreateEvent<T, K, I> | null)[] = Array(keys.length).fill(null);
+    const request = keys.map(k => ({templateId: template.templateId, key: k}));
+    const reconnectRequest = (): object[] => request.map((r, idx) => ({...r, 'contractIdAtOffset': lastContractIds[idx]}))
+    const change = (contracts: (CreateEvent<T, K, I> | null)[], events: readonly Event<T, K, I>[]): (CreateEvent<T, K, I> | null)[] => {
+      const newState: (CreateEvent<T, K, I> | null)[] = Array.from(contracts);
       for (const event of events) {
         if ('created' in event) {
-          contract = event.created;
+          const k = event.created.key;
+          keysCopy.forEach((requestKey, idx) => {
+            if (requestKey == k) {
+              newState[idx] = event.created;
+            }
+          });
         } else { // i.e. 'archived' in event
-          if (contract && contract.contractId === event.archived.contractId) {
-            contract = null;
-          }
+          const id: ContractId<T> = event.archived.contractId;
+          newState.forEach((contract, idx) => {
+            if (contract && contract.contractId === id) {
+              newState[idx] = null;
+            }
+          });
         }
       }
-      lastContractId = contract ? contract.contractId : null
-      return contract;
+      newState.forEach((c, idx) => {
+        lastContractIds[idx] = c ? c.contractId : null;
+      });
+      return newState;
     }
-    return this.streamSubmit(template, 'v1/stream/fetch', request, reconnectRequest, null, change);
+    return this.streamSubmit(template, 'v1/stream/fetch', request, reconnectRequest, initState, change);
   }
 }
 
