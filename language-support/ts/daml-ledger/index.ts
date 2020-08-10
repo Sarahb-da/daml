@@ -492,6 +492,7 @@ class Ledger {
    * Also, `change` must never change its arguments.
    */
   private streamSubmit<T extends object, K, I extends string, State>(
+    callerName: string,
     template: Template<T, K, I>,
     endpoint: string,
     request: unknown,
@@ -531,11 +532,11 @@ class Ledger {
           }
         }
       } else if (isRecordWith('warnings', json)) {
-        console.warn('Ledger.streamQuery warnings', json);
+        console.warn(`Ledger.${callerName} warnings`, json);
       } else if (isRecordWith('errors', json)) {
-        console.error('Ledger.streamQuery errors', json);
+        console.error(`Ledger.${callerName} errors`, json);
       } else {
-        console.error('Ledger.streamQuery unknown message', json);
+        console.error(`Ledger.${callerName} unknown message`, json);
       }
     };
     const onClose = ({ code, reason }: { code: number; reason: string }): void => {
@@ -609,7 +610,7 @@ class Ledger {
         .concat(createEvents)
         .filter(contract => !archiveEvents.has(contract.contractId));
     };
-    return this.streamSubmit(template, 'v1/stream/query', request, reconnectRequest, [], change);
+    return this.streamSubmit("streamQuery", template, 'v1/stream/query', request, reconnectRequest, [], change);
   }
 
   /**
@@ -639,8 +640,8 @@ class Ledger {
     ...queries: Query<T>[]
   ): Stream<T, K, I, readonly CreateEvent<T, K, I>[]> {
     const request = queries.length == 0 ? [{templateIds: [template.templateId]}]
-                                         : queries.map(q => ({templateIds: [template.templateId], query: q}));
-    const reconnectRequest = (): object[] => [request];
+                                        : queries.map(q => ({templateIds: [template.templateId], query: q}));
+    const reconnectRequest = (): object[] => request;
     const change = (contracts: readonly CreateEvent<T, K, I>[], events: readonly Event<T, K, I>[]): CreateEvent<T, K, I>[] => {
       const archiveEvents: Set<ContractId<T>> = new Set();
       const createEvents: CreateEvent<T, K, I>[] = [];
@@ -655,7 +656,7 @@ class Ledger {
         .concat(createEvents)
         .filter(contract => !archiveEvents.has(contract.contractId));
     };
-    return this.streamSubmit(template, 'v1/stream/query', request, reconnectRequest, [], change);
+    return this.streamSubmit("streamQueries", template, 'v1/stream/query', request, reconnectRequest, [], change);
   }
 
   /**
@@ -692,7 +693,7 @@ class Ledger {
       lastContractId = contract ? contract.contractId : null
       return contract;
     }
-    return this.streamSubmit(template, 'v1/stream/fetch', request, reconnectRequest, null, change);
+    return this.streamSubmit("streamFetchByKey", template, 'v1/stream/fetch', request, reconnectRequest, null, change);
   }
 
   /**
@@ -775,7 +776,7 @@ class Ledger {
       });
       return newState;
     }
-    return this.streamSubmit(template, 'v1/stream/fetch', request, reconnectRequest, initState, change);
+    return this.streamSubmit("streamFetchByKeys", template, 'v1/stream/fetch', request, reconnectRequest, initState, change);
   }
 }
 
