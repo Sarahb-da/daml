@@ -12,59 +12,55 @@ import com.daml.lf.transaction.{TransactionVersion => TV, TransactionVersions}
 // Currently only outputTransactionVersions is used.
 // languageVersions and outputTransactionVersions should be plug
 final case class EngineConfig private (
-    // constrains the version of language accepted by the engine
-    languageVersions: VersionRange[LV],
-    // constrains the version of output transactions
-    inputTransactionVersions: VersionRange[TV],
-    // constrains the version of output transactions
-    outputTransactionVersions: VersionRange[TV],
+    // constrains the versions of language accepted by the engine
+    allowLanguageVersions: VersionRange[LV],
+    // constrains the versions of input transactions
+    allowedInputTransactionVersions: VersionRange[TV],
+    // constrains the versions of output transactions
+    allowedOutputTransactionVersions: VersionRange[TV],
 ) extends NoCopy {
 
-  private[lf] val inputValueVersions =
+  private[lf] val allowedInputValueVersions =
     VersionRange(
-      TransactionVersions.assignValueVersion(inputTransactionVersions.min),
-      TransactionVersions.assignValueVersion(inputTransactionVersions.max),
+      TransactionVersions.assignValueVersion(allowedInputTransactionVersions.min),
+      TransactionVersions.assignValueVersion(allowedInputTransactionVersions.max),
     )
 
-  private[lf] val outputValueVersions =
+  private[lf] val allowedOutputValueVersions =
     VersionRange(
-      TransactionVersions.assignValueVersion(outputTransactionVersions.min),
-      TransactionVersions.assignValueVersion(outputTransactionVersions.max),
+      TransactionVersions.assignValueVersion(allowedOutputTransactionVersions.min),
+      TransactionVersions.assignValueVersion(allowedOutputTransactionVersions.max),
     )
 
 }
 
 object EngineConfig {
 
-  // development configuration, should not be used in PROD.
-  // accept all language and transaction versions supported by SDK_1_x plus development versions.
+  // Development configuration, should not be used in PROD.
   val Dev: EngineConfig = new EngineConfig(
-    languageVersions = VersionRange(
+    allowLanguageVersions = VersionRange(
       LV(LV.Major.V1, LV.Minor.Stable("6")),
       LV(LV.Major.V1, LV.Minor.Dev),
     ),
-    inputTransactionVersions = VersionRange(
+    allowedInputTransactionVersions = VersionRange(
       TV("10"),
       TransactionVersions.acceptedVersions.last
     ),
-    outputTransactionVersions = VersionRange(
-      TV("10"),
-      TransactionVersions.acceptedVersions.last
-    )
+    allowedOutputTransactionVersions = TransactionVersions.DevOutputVersions
   )
 
   // Legacy configuration, to be used by sandbox classic only
   @deprecated("Sandbox_Classic is to be used by sandbox classic only", since = "1.4.0")
   val Sandbox_Classic: EngineConfig = new EngineConfig(
-    languageVersions = VersionRange(
-      LV(LV.Major.V1, LV.Minor.Stable("1")),
+    allowLanguageVersions = VersionRange(
+      LV(LV.Major.V0, LV.Minor.Stable("")),
       LV(LV.Major.V1, LV.Minor.Dev),
     ),
-    inputTransactionVersions = VersionRange(
+    allowedInputTransactionVersions = VersionRange(
       TransactionVersions.acceptedVersions.head,
       TransactionVersions.acceptedVersions.last
     ),
-    outputTransactionVersions = VersionRange(
+    allowedOutputTransactionVersions = VersionRange(
       TV("10"),
       TransactionVersions.acceptedVersions.last
     )
@@ -76,13 +72,13 @@ object EngineConfig {
       outputTransactionVersions: VersionRange[TV],
   ): Either[String, EngineConfig] = {
     val config = new EngineConfig(
-      languageVersions = languageVersions intersect Dev.languageVersions,
-      inputTransactionVersions = inputTransactionVersions intersect Dev.inputTransactionVersions,
-      outputTransactionVersions = outputTransactionVersions intersect Dev.outputTransactionVersions,
+      allowLanguageVersions = languageVersions intersect Dev.allowLanguageVersions,
+      allowedInputTransactionVersions = inputTransactionVersions intersect Dev.allowedInputTransactionVersions,
+      allowedOutputTransactionVersions = outputTransactionVersions intersect Dev.allowedOutputTransactionVersions,
     )
 
     Either.cond(
-      config.languageVersions.nonEmpty && config.inputTransactionVersions.nonEmpty && config.outputTransactionVersions.nonEmpty,
+      config.allowLanguageVersions.nonEmpty && config.allowedInputTransactionVersions.nonEmpty && config.allowedOutputTransactionVersions.nonEmpty,
       config,
       "invalid engine configuration"
     )
